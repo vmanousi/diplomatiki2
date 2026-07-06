@@ -1,0 +1,17 @@
+experiment_name: exp02_vit_tiny
+
+dataset:
+  images_root: /home/vasia/Downloads/Labeled_Images
+  csv_path: /home/vasia/Downloads/official_splits/image_classification.csv
+  label_column: Complete agreement
+  num_classes: 23
+
+model:
+  name: vit_tiny
+
+training:
+  epochs: 1
+  batch_size: 8
+  learning_rate: 0.0001
+  num_workers: 2
+  
