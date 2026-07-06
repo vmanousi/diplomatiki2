@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual environment
+.vnv/
+
+# Model checkpoints
+*.pt
+*.pth
+
+# VS Code
+.vscode/
+
+# OS files
+.DS_Store
+
+# Dataset (keep datasets outside Git)
+Labeled_Images/
+hyper_kvasir_labeled_images/
