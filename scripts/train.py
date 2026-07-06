@@ -75,6 +75,7 @@ def main():
     model = build_model(
         model_name=config["model"]["name"],
         num_classes=dataset_cfg["num_classes"],
+        pretrained=config["model"].get("pretrained", False)
     )
 
     model = model.to(device)
