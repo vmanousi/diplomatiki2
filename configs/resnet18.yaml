@@ -1,5 +1,7 @@
 experiment_name: exp01_resnet18_config
 
+seed: 42
+
 dataset:
   images_root: /home/vasia/Downloads/Labeled_Images
   csv_path: /home/vasia/Downloads/official_splits/image_classification.csv

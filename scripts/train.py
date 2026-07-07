@@ -11,7 +11,7 @@ from torchvision import transforms
 from src.data.gastrohun_dataset import GastroHUNDataset
 from src.models.build_model import build_model
 from src.training.trainer import Trainer
-
+from src.utils.seed import set_seed
 
 def load_config(config_path):
     with open(config_path, "r") as f:
@@ -24,6 +24,7 @@ def main():
     args = parser.parse_args()
 
     config = load_config(args.config)
+    set_seed(config.get("seed", 42))
 
     experiment_name = config["experiment_name"]
     experiment_dir = Path("experiments") / experiment_name
