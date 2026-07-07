@@ -1,5 +1,6 @@
 import argparse
 from pathlib import Path
+import shutil
 
 import pandas as pd
 import torch
@@ -30,6 +31,8 @@ def main():
     experiment_dir = Path("experiments") / experiment_name
     checkpoint_dir = experiment_dir / "checkpoints"
     experiment_dir.mkdir(parents=True, exist_ok=True)
+
+    shutil.copy(args.config, experiment_dir / "config.yaml")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Device:", device)
