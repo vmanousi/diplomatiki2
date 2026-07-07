@@ -13,6 +13,7 @@ from src.data.gastrohun_dataset import GastroHUNDataset
 from src.models.build_model import build_model
 from src.training.trainer import Trainer
 from src.utils.seed import set_seed
+from src.utils.device import get_device
 
 def load_config(config_path):
     with open(config_path, "r") as f:
@@ -34,7 +35,7 @@ def main():
 
     shutil.copy(args.config, experiment_dir / "config.yaml")
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = get_device()
     print("Device:", device)
     print("Experiment:", experiment_name)
 
