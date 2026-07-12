@@ -7,13 +7,16 @@ import torch
 import yaml
 from torch import nn
 from torch.utils.data import DataLoader
-from torchvision import transforms
+from src.data.build_transform import build_transform
 
-from src.data.gastrohun_dataset import GastroHUNDataset
+from src.data.build_dataset import build_dataset
 from src.models.build_model import build_model
 from src.training.trainer import Trainer
 from src.utils.seed import set_seed
 from src.utils.device import get_device
+from src.evaluation.plots import plot_training_curves
+from src.evaluation.metrics import evaluate_model
+
 
 def load_config(config_path):
     with open(config_path, "r") as f:
@@ -29,8 +32,9 @@ def main():
     set_seed(config.get("seed", 42))
 
     experiment_name = config["experiment_name"]
-    experiment_dir = Path("experiments") / experiment_name
+    experiment_dir = Path("outputs") / "experiments" / experiment_name
     checkpoint_dir = experiment_dir / "checkpoints"
+    tensorboard_dir = experiment_dir / "tensorboard"
     experiment_dir.mkdir(parents=True, exist_ok=True)
 
     shutil.copy(args.config, experiment_dir / "config.yaml")
@@ -39,34 +43,29 @@ def main():
     print("Device:", device)
     print("Experiment:", experiment_name)
 
-    transform = transforms.Compose([
-        transforms.Resize((224, 224)),
-        transforms.ToTensor(),
-    ])
+    transform = build_transform(config)
 
     dataset_cfg = config["dataset"]
     training_cfg = config["training"]
 
-    train_ds = GastroHUNDataset(
-        images_root=dataset_cfg["images_root"],
-        csv_path=dataset_cfg["csv_path"],
-        split="Train",
-        label_column=dataset_cfg["label_column"],
+    train_ds = build_dataset(
+        config,
+        split="train",
         transform=transform,
     )
 
-    val_ds = GastroHUNDataset(
-        images_root=dataset_cfg["images_root"],
-        csv_path=dataset_cfg["csv_path"],
-        split="Validation",
-        label_column=dataset_cfg["label_column"],
+    val_ds = build_dataset(
+        config,
+        split="val",
         transform=transform,
     )
+
+    is_webdataset = dataset_cfg.get("name") == "gastrovision_webdataset"
 
     train_loader = DataLoader(
         train_ds,
         batch_size=training_cfg["batch_size"],
-        shuffle=True,
+        shuffle=False if is_webdataset else True,
         num_workers=training_cfg["num_workers"],
     )
 
@@ -80,7 +79,7 @@ def main():
     model = build_model(
         model_name=config["model"]["name"],
         num_classes=dataset_cfg["num_classes"],
-        pretrained=config["model"].get("pretrained", False)
+        pretrained=config["model"].get("pretrained", False),
     )
 
     model = model.to(device)
@@ -99,14 +98,32 @@ def main():
         optimizer=optimizer,
         device=device,
         checkpoint_dir=checkpoint_dir,
+        tensorboard_dir=tensorboard_dir,
     )
 
     history = trainer.fit(epochs=training_cfg["epochs"])
 
+    history_path = experiment_dir / "history.csv"
+
     pd.DataFrame(history).to_csv(
-        experiment_dir / "history.csv",
+        history_path,
         index=False,
     )
+
+    plot_training_curves(
+        history_csv=history_path,
+        output_dir=experiment_dir,
+    )
+
+    metrics = evaluate_model(
+        model=model,
+        dataloader=val_loader,
+        device=device,
+        output_dir=experiment_dir,
+    )
+
+  
+    print("Final metrics:", metrics)
 
     print("Training finished.")
 

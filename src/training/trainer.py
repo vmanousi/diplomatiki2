@@ -1,6 +1,8 @@
 from pathlib import Path
 
 import torch
+from sklearn.metrics import precision_recall_fscore_support
+from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 
@@ -14,6 +16,7 @@ class Trainer:
         optimizer,
         device,
         checkpoint_dir,
+        tensorboard_dir=None,
     ):
         self.model = model
         self.train_loader = train_loader
@@ -23,6 +26,8 @@ class Trainer:
         self.device = device
         self.checkpoint_dir = Path(checkpoint_dir)
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+        self.writer = SummaryWriter(str(tensorboard_dir)) if tensorboard_dir else None
 
         self.best_val_acc = 0.0
 
@@ -63,6 +68,9 @@ class Trainer:
         correct = 0
         total = 0
 
+        all_labels = []
+        all_preds = []
+
         with torch.no_grad():
             for images, labels in tqdm(self.val_loader, desc="Validation"):
                 images = images.to(self.device)
@@ -77,10 +85,17 @@ class Trainer:
                 correct += (preds == labels).sum().item()
                 total += labels.size(0)
 
+                all_labels.extend(labels.cpu().numpy())
+                all_preds.extend(preds.cpu().numpy())
+
         avg_loss = total_loss / total
         accuracy = correct / total
 
-        return avg_loss, accuracy
+        precision, recall, f1, _ = precision_recall_fscore_support(
+            all_labels, all_preds, average="macro", zero_division=0
+        )
+
+        return avg_loss, accuracy, precision, recall, f1
 
     def save_checkpoint(self, epoch, val_acc):
         checkpoint_path = self.checkpoint_dir / "best_model.pt"
@@ -102,13 +117,14 @@ class Trainer:
             print(f"\nEpoch {epoch}/{epochs}")
 
             train_loss, train_acc = self.train_one_epoch()
-            val_loss, val_acc = self.validate()
+            val_loss, val_acc, val_precision, val_recall, val_f1 = self.validate()
 
             print(
                 f"Train loss: {train_loss:.4f} | "
                 f"Train acc: {train_acc:.4f} | "
                 f"Val loss: {val_loss:.4f} | "
-                f"Val acc: {val_acc:.4f}"
+                f"Val acc: {val_acc:.4f} | "
+                f"Val F1 (macro): {val_f1:.4f}"
             )
 
             history.append(
@@ -118,12 +134,27 @@ class Trainer:
                     "train_acc": train_acc,
                     "val_loss": val_loss,
                     "val_acc": val_acc,
+                    "val_precision": val_precision,
+                    "val_recall": val_recall,
+                    "val_f1": val_f1,
                 }
             )
+
+            if self.writer:
+                self.writer.add_scalar("Loss/train", train_loss, epoch)
+                self.writer.add_scalar("Loss/val", val_loss, epoch)
+                self.writer.add_scalar("Accuracy/train", train_acc, epoch)
+                self.writer.add_scalar("Accuracy/val", val_acc, epoch)
+                self.writer.add_scalar("Precision/val_macro", val_precision, epoch)
+                self.writer.add_scalar("Recall/val_macro", val_recall, epoch)
+                self.writer.add_scalar("F1/val_macro", val_f1, epoch)
 
             if val_acc > self.best_val_acc:
                 self.best_val_acc = val_acc
                 self.save_checkpoint(epoch, val_acc)
                 print("Saved new best model.")
+
+        if self.writer:
+            self.writer.close()
 
         return history

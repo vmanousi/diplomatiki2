@@ -1,6 +1,8 @@
 torch
 torchvision
 timm
+webdataset
+tensorboard
 
 numpy
 pandas

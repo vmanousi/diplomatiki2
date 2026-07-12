@@ -1,0 +1,23 @@
+experiment_name: exp03_supervised_gastrovision_vit_tiny_ep01
+
+seed: 42
+
+dataset:
+  name: gastrovision_webdataset
+  root: data/Gastrovision_webdataset
+  image_size: 224
+  num_classes: 22
+
+model:
+  name: vit_tiny
+  pretrained: false
+
+transforms:
+  name: supervised_basic
+  image_size: 224
+
+training:
+  epochs: 1
+  batch_size: 16
+  learning_rate: 0.0001
+  num_workers: 2
