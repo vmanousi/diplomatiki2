@@ -19,6 +19,17 @@ LOG_DIR="outputs/logs/${EXP_NAME}"
 mkdir -p outputs/logs
 mkdir -p "$LOG_DIR"
 
+# SBATCH --output/--error above can only use SLURM's %j (job id), not
+# $EXP_NAME, since they're resolved at submission time before this script
+# runs. So SLURM always writes them flat into outputs/logs/ first; this
+# relocates them into the per-experiment folder. Registered as a trap so
+# it still runs even if training below fails/crashes.
+cleanup() {
+    mv "outputs/logs/slurm_${SLURM_JOB_ID}.out" "$LOG_DIR/slurm_${SLURM_JOB_ID}.out" 2>/dev/null || true
+    mv "outputs/logs/slurm_${SLURM_JOB_ID}.err" "$LOG_DIR/slurm_${SLURM_JOB_ID}.err" 2>/dev/null || true
+}
+trap cleanup EXIT
+
 source .venv/bin/activate
 
 echo "================================"
@@ -39,6 +50,3 @@ python -u -m scripts.train --config "$CONFIG" \
 echo "================================"
 echo "End: $(date)"
 echo "================================"
-
-mv "outputs/logs/slurm_${SLURM_JOB_ID}.out" "$LOG_DIR/slurm_${SLURM_JOB_ID}.out" 2>/dev/null || true
-mv "outputs/logs/slurm_${SLURM_JOB_ID}.err" "$LOG_DIR/slurm_${SLURM_JOB_ID}.err" 2>/dev/null || true
