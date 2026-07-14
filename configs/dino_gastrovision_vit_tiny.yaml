@@ -1,0 +1,35 @@
+experiment_name: exp07_dino_gastrovision_vit_tiny
+
+seed: 42
+
+dataset:
+  name: gastrovision_webdataset
+  root: data/Gastrovision_webdataset
+  image_size: 224
+
+model:
+  name: vit_tiny_patch16_224
+  out_dim: 1024
+  hidden_dim: 2048
+  bottleneck_dim: 256
+
+transforms:
+  name: dino_multicrop
+  global_crop_size: 224
+  local_crop_size: 96
+  global_crop_scale: [0.4, 1.0]
+  local_crop_scale: [0.05, 0.4]
+  num_local_crops: 6
+
+training:
+  epochs: 20
+  batch_size: 16
+  learning_rate: 0.0001
+  weight_decay: 0.04
+  num_workers: 2
+
+  teacher_momentum: 0.996
+  teacher_temperature: 0.04
+  student_temperature: 0.1
+  center_momentum: 0.9
+  gradient_clip: 3.0

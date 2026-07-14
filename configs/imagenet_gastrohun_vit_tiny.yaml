@@ -1,0 +1,24 @@
+experiment_name: exp07_imagenet_gastrohun_vit_tiny_ep20
+
+seed: 42
+
+dataset:
+  name: gastrohun
+  images_root: data/Labeled_Images_GastroHun
+  csv_path: data/official_splits_GastroHun/image_classification.csv
+  label_column: Complete agreement
+  num_classes: 23
+
+model:
+  name: vit_tiny
+  pretrained: true
+
+transforms:
+  name: supervised_basic
+  image_size: 224
+
+training:
+  epochs: 20
+  batch_size: 8
+  learning_rate: 0.0001
+  num_workers: 2

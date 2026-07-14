@@ -26,6 +26,7 @@ def build_dataset(config, split, transform=None):
             root=dataset_cfg["root"],
             split=split,
             image_size=dataset_cfg.get("image_size", 224),
+            transform=transform,
         )
 
     else:
