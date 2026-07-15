@@ -12,6 +12,7 @@ from src.data.build_transform import build_transform
 from src.losses.dino_loss import DINOLoss
 from src.models.dino import build_dino_student_teacher
 from src.training.dino_trainer import DINOTrainer
+from src.training.dino_schedules import cosine_schedule
 from src.utils.device import get_device
 from src.utils.seed import set_seed
 
@@ -104,6 +105,74 @@ def main():
             256,
         ),
     )
+    
+    
+    steps_per_epoch = training_cfg["steps_per_epoch"]
+    total_steps = steps_per_epoch * training_cfg["epochs"]
+
+    warmup_epochs = training_cfg.get(
+        "warmup_epochs",
+        0,
+    )
+    warmup_steps = steps_per_epoch * warmup_epochs
+
+    if total_steps <= 0:
+        raise RuntimeError(
+            "The DINO training configuration produced "
+            "zero total training steps."
+        )
+
+    if warmup_steps > total_steps:
+        raise ValueError(
+            "warmup_epochs cannot exceed the total "
+            "number of training epochs."
+        )
+
+    learning_rate_schedule = cosine_schedule(
+        start_value=training_cfg["learning_rate"],
+        final_value=training_cfg.get(
+            "final_learning_rate",
+            1e-6,
+        ),
+        total_steps=total_steps,
+        warmup_steps=warmup_steps,
+        warmup_start_value=training_cfg.get(
+            "warmup_start_learning_rate",
+            1e-6,
+        ),
+    )
+
+    teacher_momentum_schedule = cosine_schedule(
+        start_value=training_cfg.get(
+            "teacher_momentum",
+            0.996,
+        ),
+        final_value=training_cfg.get(
+            "final_teacher_momentum",
+            1.0,
+        ),
+        total_steps=total_steps,
+    )
+
+    print("Steps per epoch:", steps_per_epoch)
+    print("Total training steps:", total_steps)
+    print("Warm-up steps:", warmup_steps)
+
+    print(
+        "Learning-rate schedule:",
+        learning_rate_schedule[0],
+        "->",
+        learning_rate_schedule[-1],
+    )
+
+    print(
+        "Teacher-momentum schedule:",
+        teacher_momentum_schedule[0],
+        "->",
+        teacher_momentum_schedule[-1],
+    )
+    
+    
 
     num_student_views = (
         2
@@ -125,7 +194,7 @@ def main():
             "center_momentum",
             0.9,
         ),
-    )
+    ).to(device)
 
     optimizer = torch.optim.AdamW(
         student.parameters(),
@@ -152,6 +221,9 @@ def main():
             "gradient_clip",
             3.0,
         ),
+        
+        learning_rate_schedule=learning_rate_schedule,
+        teacher_momentum_schedule=teacher_momentum_schedule,
     )
 
     history = trainer.fit(
