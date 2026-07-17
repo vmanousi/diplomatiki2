@@ -23,6 +23,7 @@ transforms:
 
 training:
   epochs: 1
+  total_epochs: 2  # final target across every resume segment — keep fixed
   steps_per_epoch: 297
   batch_size: 16
 

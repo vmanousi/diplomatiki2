@@ -68,11 +68,20 @@ def main():
 
     experiment_dir = Path("outputs") / "experiments" / experiment_name
 
+    idx_to_label = getattr(val_dataset, "idx_to_label", None)
+
+    class_names = (
+        [idx_to_label[i] for i in range(len(idx_to_label))]
+        if idx_to_label is not None
+        else None
+    )
+
     metrics = evaluate_model(
         model=model,
         dataloader=val_loader,
         device=device,
         output_dir=experiment_dir,
+        class_names=class_names,
     )
 
     print("Best-checkpoint evaluation finished.")

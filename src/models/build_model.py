@@ -6,6 +6,62 @@ from torchvision import models
 import timm
 
 
+VIT_SHORTHAND_NAMES = {
+    "vit_tiny": "vit_tiny_patch16_224",
+    "vit_small": "vit_small_patch16_224",
+    "vit_base": "vit_base_patch16_224",
+}
+
+# What DINOMultiCropTransform normalizes with during DINO SSL pretraining
+# (src/data/dino_transform.py). Any backbone_checkpoint was pretrained on
+# images normalized this way, regardless of its ViT size.
+DINO_BACKBONE_MEAN = (0.485, 0.456, 0.406)
+DINO_BACKBONE_STD = (0.229, 0.224, 0.225)
+
+# Standard torchvision ImageNet normalization, used by all of
+# torchvision's ImageNet-pretrained ResNet weights.
+RESNET_IMAGENET_MEAN = (0.485, 0.456, 0.406)
+RESNET_IMAGENET_STD = (0.229, 0.224, 0.225)
+
+
+def resolve_backbone_normalization(model_name, pretrained, backbone_checkpoint):
+    """
+    Return the (mean, std) a pretrained backbone's input needs to be
+    normalized with, or None if the model has no such requirement (i.e.
+    it's being trained from scratch, so no input distribution to match).
+
+    Different pretrained checkpoints genuinely expect different stats
+    (e.g. timm's ImageNet ViT recipe uses (0.5, 0.5, 0.5) while DINOv2
+    checkpoints use standard ImageNet stats), so this resolves them from
+    the actual checkpoint rather than assuming one constant everywhere.
+    """
+
+    if backbone_checkpoint is not None:
+        return DINO_BACKBONE_MEAN, DINO_BACKBONE_STD
+
+    if not pretrained:
+        return None
+
+    if model_name in {"resnet18", "resnet50"}:
+        return RESNET_IMAGENET_MEAN, RESNET_IMAGENET_STD
+
+    if model_name in VIT_SHORTHAND_NAMES or model_name.startswith("vit_"):
+        timm_name = VIT_SHORTHAND_NAMES.get(model_name, model_name)
+
+        # pretrained=False here only to read the checkpoint's recorded
+        # normalization stats without downloading its weights.
+        reference_model = timm.create_model(timm_name, pretrained=False)
+
+        return (
+            reference_model.pretrained_cfg["mean"],
+            reference_model.pretrained_cfg["std"],
+        )
+
+    raise ValueError(
+        f"Unknown model for normalization lookup: {model_name}"
+    )
+
+
 def _load_backbone_checkpoint(
     model,
     checkpoint_path,
@@ -220,18 +276,12 @@ def build_model(
 
         return model
 
-    vit_shorthand_names = {
-        "vit_tiny": "vit_tiny_patch16_224",
-        "vit_small": "vit_small_patch16_224",
-        "vit_base": "vit_base_patch16_224",
-    }
-
-    if model_name in vit_shorthand_names or model_name.startswith("vit_"):
+    if model_name in VIT_SHORTHAND_NAMES or model_name.startswith("vit_"):
         # Known shorthand names map to the standard ImageNet-recipe ViT
         # (patch16). Anything else starting with "vit_" is passed through
         # as a literal timm model identifier, e.g.
         # "vit_small_patch14_dinov2.lvd142m" for a Meta DINOv2 checkpoint.
-        timm_name = vit_shorthand_names.get(model_name, model_name)
+        timm_name = VIT_SHORTHAND_NAMES.get(model_name, model_name)
 
         if backbone_checkpoint is not None:
             # Build the encoder without a classification head so

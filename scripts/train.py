@@ -488,11 +488,20 @@ def main():
     # --------------------------------------------------------------
     # Final evaluation of the best model
     # --------------------------------------------------------------
+    idx_to_label = getattr(train_dataset, "idx_to_label", None)
+
+    class_names = (
+        [idx_to_label[i] for i in range(len(idx_to_label))]
+        if idx_to_label is not None
+        else None
+    )
+
     metrics = evaluate_model(
         model=model,
         dataloader=val_loader,
         device=device,
         output_dir=experiment_dir,
+        class_names=class_names,
     )
 
     print(

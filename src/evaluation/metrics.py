@@ -12,9 +12,17 @@ from sklearn.metrics import (
 from tqdm import tqdm
 
 
-def evaluate_model(model, dataloader, device, output_dir):
+def evaluate_model(model, dataloader, device, output_dir, class_names=None):
     """
     Evaluate a trained model and save all evaluation artifacts.
+
+    class_names:
+        Optional list of class name strings, ordered by class index
+        (e.g. dataset.idx_to_label built into a list). When given, all
+        saved artifacts are labeled with real class names instead of
+        raw integer indices. When None (e.g. GastroVision, which has no
+        string label available), falls back to numeric indices exactly
+        as before.
 
     Saves:
         - classification_report.csv
@@ -55,9 +63,21 @@ def evaluate_model(model, dataloader, device, output_dir):
 
     accuracy = accuracy_score(all_labels, all_preds)
 
+    # Explicit labels (and target_names, when available) so every class
+    # gets a row/column even if it happens to have zero true or predicted
+    # samples in this particular evaluation, and so results are labeled
+    # with real class names instead of raw integer indices.
+    label_indices = (
+        list(range(len(class_names)))
+        if class_names is not None
+        else None
+    )
+
     report = classification_report(
         all_labels,
         all_preds,
+        labels=label_indices,
+        target_names=class_names,
         output_dict=True,
         zero_division=0,
     )
@@ -74,11 +94,16 @@ def evaluate_model(model, dataloader, device, output_dir):
     cm = confusion_matrix(
         all_labels,
         all_preds,
+        labels=label_indices,
     )
 
-    pd.DataFrame(cm).to_csv(
+    pd.DataFrame(
+        cm,
+        index=class_names,
+        columns=class_names,
+    ).to_csv(
         output_dir / "confusion_matrix.csv",
-        index=False,
+        index=class_names is not None,
     )
 
     plt.figure(figsize=(10, 8))
@@ -91,6 +116,11 @@ def evaluate_model(model, dataloader, device, output_dir):
     plt.title("Confusion Matrix")
 
     plt.colorbar()
+
+    if class_names is not None:
+        tick_positions = range(len(class_names))
+        plt.xticks(tick_positions, class_names, rotation=90)
+        plt.yticks(tick_positions, class_names)
 
     plt.xlabel("Predicted class")
     plt.ylabel("True class")

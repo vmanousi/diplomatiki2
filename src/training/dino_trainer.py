@@ -22,6 +22,7 @@ class DINOTrainer:
         teacher_momentum_schedule=None,
         teacher_temperature_schedule=None,
         mixed_precision=False,
+        total_steps=None,
     ):
         self.student = student
         self.teacher = teacher
@@ -30,6 +31,11 @@ class DINOTrainer:
         self.optimizer = optimizer
         self.device = device
         self.checkpoint_dir = Path(checkpoint_dir)
+
+        # Recorded so a resumed run can verify it's continuing the same
+        # schedule shape rather than silently recomputing a different one
+        # (e.g. because --config was given a different `epochs` value).
+        self.total_steps = total_steps
 
         self.teacher_momentum = float(
             teacher_momentum
@@ -466,6 +472,11 @@ class DINOTrainer:
                 ),
                 "amp_enabled": bool(
                     self.amp_enabled
+                ),
+                "total_steps": (
+                    int(self.total_steps)
+                    if self.total_steps is not None
+                    else None
                 ),
             },
             checkpoint_path,

@@ -15,14 +15,17 @@ class GastroHUNDataset(Dataset):
 
         df = pd.read_csv(self.csv_path)
         df.columns = df.columns.str.strip()
-        df = df[df["set_type"] == split].copy()
         df = df.dropna(subset=[label_column])
         df = df[df[label_column].astype(str).str.strip() != ""]
 
+        # Build the label mapping from every split combined, so train/val/
+        # test share identical indices even if a class were ever missing
+        # from one split.
         self.labels = sorted(df[label_column].unique())
         self.label_to_idx = {label: i for i, label in enumerate(self.labels)}
         self.idx_to_label = {i: label for label, i in self.label_to_idx.items()}
 
+        df = df[df["set_type"] == split].copy()
         df["label_idx"] = df[label_column].map(self.label_to_idx)
         self.df = df.reset_index(drop=True)
 

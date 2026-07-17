@@ -90,6 +90,33 @@ Earlier supervised runs trained with no augmentation, unweighted plain Adam, a s
 - `training.optimizer: adamw` (already existed, just wasn't used by any config).
 - `training.early_stopping_patience: N` — stop after N epochs without val_acc improvement. Omit to train the full epoch count as before.
 
+## 4b-2. Pretrained-backbone normalization fix (added 2026-07-17)
+
+`build_transform.py` only ever did `Resize + ToTensor` — no `Normalize` step — for `supervised_basic`/`supervised_augmented`. That's fine for from-scratch models (`pretrained: false`, no `backbone_checkpoint`), but any config loading a pretrained backbone was feeding it raw `[0,1]` pixels instead of the distribution it actually expects. Confirmed the expected stats genuinely differ per checkpoint (not one universal constant):
+
+- timm ImageNet ViT (`vit_tiny`/`vit_small`/`vit_base` shorthand, `pretrained: true`) → `mean/std = (0.5,0.5,0.5)`
+- Meta DINOv2 checkpoints (e.g. `vit_small_patch14_dinov2.lvd142m`) → ImageNet stats `(0.485,0.456,0.406)/(0.229,0.224,0.225)`
+- Any `backbone_checkpoint` (your own DINO-pretrained backbone) → also ImageNet stats, since that's what `DINOMultiCropTransform` normalized with during its SSL pretraining
+- resnet18/50 `pretrained: true` → ImageNet stats (torchvision default)
+
+Fixed via `resolve_backbone_normalization()` in `build_model.py`, resolved automatically per-model (queried from timm's own `pretrained_cfg` for ViT variants, not hardcoded) and applied in `build_transform.py`. From-scratch configs are completely unaffected — this only changes behavior when `pretrained: true` or `backbone_checkpoint` is set.
+
+**Consequence: `exp08`–`exp11` (DINO-backbone GastroHUN frozen/fine-tune runs) were already executed on the cluster before this fix, with the backbone seeing an unnormalized input it was never calibrated for. Their saved results should be treated as stale/invalid — re-run these configs to get results that actually reflect the pretrained backbone's quality.** Same caution applies to `exp07_imagenet_gastrohun_vit_tiny_ep20` (`imagenet_gastrohun_vit_tiny.yaml`) if it's been run — check before trusting its number.
+
+## 4b-3. Checkpoint/early-stopping criterion + shared label mapping (added 2026-07-17)
+
+Two more bugs found by review:
+
+- **Best checkpoint and early stopping were driven by val_acc, not macro F1.** For a 23-class imbalanced task, accuracy lets common classes dominate the selection criterion, which is the wrong thing to optimize for a "detect pathological findings" task. `Trainer` now tracks `best_val_f1` and both checkpoint-saving and `early_stopping_patience` compare against `val_f1`. `best_model.pt` now also stores `val_f1` alongside `val_acc`. This is a real behavior change for any future run — checkpoint selection may land on a different epoch than before. Doesn't affect already-saved checkpoints, only future/rerun ones.
+- **`GastroHUNDataset` built its label→index mapping from each split independently** (`self.labels = sorted(df[label_column].unique())` ran *after* filtering to the split), so train/val/test theoretically didn't have to agree on what index N means. Checked: currently a no-op bug, since all 23 classes happen to appear in every split of the current CSV — but not guaranteed, and exactly the kind of thing that could silently break on the final unpublished evaluation dataset. Fixed by building the label vocabulary from the full (pre-split) CSV once, then filtering to the split afterward. Verified this produces an identical mapping to before on the current data (zero behavior change today, pure future-proofing).
+
+## 4b-4. Four more bugs found by review (added 2026-07-17)
+
+- **GastroVision DINO pretraining never shuffled data.** `build_gastrovision_webdataset()` had `shardshuffle=False` and no `.shuffle()` call, so every epoch iterated the exact same fixed image order every time — a real, silent SSL training-quality bug (already affected `exp07_dino_gastrovision_vit_tiny`). Fixed: `shardshuffle=100` + `.shuffle(1000)` for `split="train"` only; val/test stay deterministic as before.
+- **Resuming DINO training with a different `epochs` silently desynced the LR/teacher-momentum schedule.** The schedules are recomputed fresh each invocation, sized to `steps_per_epoch * epochs` — so a resume segment with a different `epochs` than the run that produced the checkpoint got a differently-shaped schedule with no error. The shipped example (`dino_gastrovision_vit_tiny_resume_part1.yaml` epochs=1 → `_part2.yaml` epochs=2) demonstrated exactly this risky pattern — and it's the *only* way to stop a segment early with the old schema, so this wasn't just user error, it was a schema gap. Fixed two ways: (1) added `training.total_epochs` (defaults to `epochs`) as the fixed final-schedule target across every resume segment, separate from `epochs` (how far *this* invocation runs) — `resume_part1`/`resume_part2` now both set `total_epochs: 2`; (2) the checkpoint now records `total_steps`, and resuming raises a clear error if the current config's `total_steps` doesn't match, instead of silently drifting (checkpoints predating this fix have no recorded `total_steps` and just print a warning).
+- **Final evaluation reports only showed numeric class indices, never pathology names.** `evaluate_model()` in `metrics.py` now takes an optional `class_names` list; `train.py`/`evaluate_checkpoint.py` build it from `dataset.idx_to_label` when available (GastroHUN) and pass `None` otherwise (GastroVision has no string labels), so `classification_report.csv`/`confusion_matrix.csv`/`.png` are now labeled with real class names (e.g. "A1", "L6") wherever possible, with zero behavior change for GastroVision.
+- **Dead code**: removed `src/evaluation/evaluate.py`, an unused duplicate `evaluate_model` with a different signature than the one actually imported anywhere (confirmed via grep — zero importers).
+
 ## 4c. Phase A — backbone-source comparison on GastroHUN (added 2026-07-17)
 
 Matched-capacity (~22M params) comparison of pretraining source, holding model scale (ViT-S) constant, evaluated by fine-tuning/probing on GastroHUN:

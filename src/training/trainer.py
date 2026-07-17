@@ -29,7 +29,7 @@ class Trainer:
 
         self.writer = SummaryWriter(str(tensorboard_dir)) if tensorboard_dir else None
 
-        self.best_val_acc = 0.0
+        self.best_val_f1 = 0.0
 
     def train_one_epoch(self):
         self.model.train()
@@ -97,7 +97,7 @@ class Trainer:
 
         return avg_loss, accuracy, precision, recall, f1
 
-    def save_checkpoint(self, epoch, val_acc):
+    def save_checkpoint(self, epoch, val_acc, val_f1):
         checkpoint_path = self.checkpoint_dir / "best_model.pt"
 
         torch.save(
@@ -106,16 +106,23 @@ class Trainer:
                 "model_state_dict": self.model.state_dict(),
                 "optimizer_state_dict": self.optimizer.state_dict(),
                 "val_acc": val_acc,
+                "val_f1": val_f1,
             },
             checkpoint_path,
         )
 
     def fit(self, epochs, early_stopping_patience=None):
         """
+        Best checkpoint and early stopping are both driven by macro-F1
+        (not accuracy) — with per-class imbalance, accuracy can reward a
+        checkpoint that ignores rare classes as long as it nails the
+        common ones, which is the opposite of what a "detect pathological
+        findings across N classes" task should optimize for.
+
         early_stopping_patience:
             If set, stop training after this many consecutive epochs
-            without a val_acc improvement. None (default) trains the
-            full number of epochs, matching the previous behaviour.
+            without a val_f1 improvement. None (default) trains the full
+            number of epochs, matching the previous behaviour.
         """
 
         history = []
@@ -157,9 +164,9 @@ class Trainer:
                 self.writer.add_scalar("Recall/val_macro", val_recall, epoch)
                 self.writer.add_scalar("F1/val_macro", val_f1, epoch)
 
-            if val_acc > self.best_val_acc:
-                self.best_val_acc = val_acc
-                self.save_checkpoint(epoch, val_acc)
+            if val_f1 > self.best_val_f1:
+                self.best_val_f1 = val_f1
+                self.save_checkpoint(epoch, val_acc, val_f1)
                 print("Saved new best model.")
                 epochs_without_improvement = 0
             else:
@@ -170,7 +177,7 @@ class Trainer:
                 and epochs_without_improvement >= early_stopping_patience
             ):
                 print(
-                    "Early stopping: no val_acc improvement for "
+                    "Early stopping: no val_f1 improvement for "
                     f"{early_stopping_patience} epochs."
                 )
                 break

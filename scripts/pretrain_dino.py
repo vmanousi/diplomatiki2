@@ -156,6 +156,20 @@ def main():
         training_cfg["epochs"]
     )
 
+    # The schedules (LR / teacher momentum / teacher temperature) must be
+    # sized to the FINAL target epoch count, fixed across every resume
+    # segment of the same run — not to however far *this* invocation
+    # trains. `epochs` still means "run through this epoch this
+    # invocation" (as before, for a single-shot run these are the same
+    # number). `total_epochs` defaults to `epochs`, so anything that
+    # doesn't split a run across resume segments is unaffected.
+    total_epochs = int(
+        training_cfg.get(
+            "total_epochs",
+            epochs,
+        )
+    )
+
     warmup_epochs = int(
         training_cfg.get(
             "warmup_epochs",
@@ -173,6 +187,13 @@ def main():
             "epochs must be greater than zero."
         )
 
+    if total_epochs < epochs:
+        raise ValueError(
+            "total_epochs cannot be smaller than epochs — "
+            "total_epochs is the final schedule target across every "
+            "resume segment, epochs is how far this invocation runs."
+        )
+
     if warmup_epochs < 0:
         raise ValueError(
             "warmup_epochs cannot be negative."
@@ -180,7 +201,7 @@ def main():
 
     total_steps = (
         steps_per_epoch
-        * epochs
+        * total_epochs
     )
 
     warmup_steps = (
@@ -342,6 +363,7 @@ def main():
             "mixed_precision",
             False,
         ),
+        total_steps=total_steps,
     )
 
     start_epoch = 1
@@ -425,6 +447,40 @@ def main():
             print(
                 "Checkpoint has no AMP scaler state; "
                 "using a newly initialized scaler."
+            )
+
+        # The LR/teacher-momentum/teacher-temperature schedules are
+        # recomputed fresh from this run's config, sized to this run's
+        # total_steps (steps_per_epoch * total_epochs). If a resume
+        # segment uses a different `total_epochs` (or steps_per_epoch)
+        # than the run that produced this checkpoint, the recomputed
+        # schedule has a different shape than the one actually used for
+        # the steps already completed, and every already-executed step's
+        # schedule value silently stops matching what the checkpoint
+        # assumes. Older checkpoints (predating this check) have no
+        # recorded total_steps, so there's nothing to verify against —
+        # proceed with a warning instead of failing on existing
+        # checkpoints.
+        checkpoint_total_steps = checkpoint.get(
+            "total_steps"
+        )
+
+        if checkpoint_total_steps is None:
+            print(
+                "Warning: resume checkpoint has no recorded "
+                "total_steps (predates this check) — cannot verify "
+                "the schedule shape matches. Proceeding anyway."
+            )
+        elif checkpoint_total_steps != total_steps:
+            raise ValueError(
+                "Resume schedule mismatch: this checkpoint was "
+                f"produced with total_steps={checkpoint_total_steps}, "
+                f"but this config computes total_steps={total_steps} "
+                f"(steps_per_epoch={steps_per_epoch} * "
+                f"total_epochs={total_epochs}). Keep `total_epochs` "
+                "(and steps_per_epoch) identical across every resume "
+                "segment of the same run — only `epochs` (how far this "
+                "invocation runs) and start_epoch should change."
             )
 
         trainer.global_step = int(

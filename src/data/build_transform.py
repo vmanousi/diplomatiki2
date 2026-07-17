@@ -1,6 +1,7 @@
 from torchvision import transforms
 
 from src.data.dino_transform import DINOMultiCropTransform
+from src.models.build_model import resolve_backbone_normalization
 
 
 def build_transform(config, split="train"):
@@ -16,16 +17,36 @@ def build_transform(config, split="train"):
 
     transform_cfg = config.get("transforms", {})
     transform_name = transform_cfg.get("name", "supervised_basic")
+    model_cfg = config.get("model", {})
 
     image_size = transform_cfg.get(
         "image_size",
         config.get("dataset", {}).get("image_size", 224),
     )
 
-    eval_transform = transforms.Compose([
+    # A pretrained backbone (ImageNet or a DINO backbone_checkpoint) needs
+    # its input normalized to match what it was actually pretrained on.
+    # From-scratch models (no pretrained weights involved) have no such
+    # requirement, so this is None and Normalize is simply omitted.
+    normalization = None
+
+    if transform_name in {"supervised_basic", "supervised_augmented"}:
+        normalization = resolve_backbone_normalization(
+            model_name=model_cfg.get("name"),
+            pretrained=model_cfg.get("pretrained", False),
+            backbone_checkpoint=model_cfg.get("backbone_checkpoint"),
+        )
+
+    eval_steps = [
         transforms.Resize((image_size, image_size)),
         transforms.ToTensor(),
-    ])
+    ]
+
+    if normalization is not None:
+        mean, std = normalization
+        eval_steps.append(transforms.Normalize(mean=mean, std=std))
+
+    eval_transform = transforms.Compose(eval_steps)
 
     if transform_name == "supervised_basic":
         return eval_transform
@@ -34,7 +55,7 @@ def build_transform(config, split="train"):
         if split != "train":
             return eval_transform
 
-        return transforms.Compose([
+        train_steps = [
             transforms.RandomResizedCrop(
                 image_size,
                 scale=tuple(
@@ -54,7 +75,13 @@ def build_transform(config, split="train"):
                 saturation=transform_cfg.get("color_jitter_saturation", 0.1),
             ),
             transforms.ToTensor(),
-        ])
+        ]
+
+        if normalization is not None:
+            mean, std = normalization
+            train_steps.append(transforms.Normalize(mean=mean, std=std))
+
+        return transforms.Compose(train_steps)
 
     if transform_name == "dino_multicrop":
         return DINOMultiCropTransform(

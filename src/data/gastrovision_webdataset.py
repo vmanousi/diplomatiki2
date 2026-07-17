@@ -44,11 +44,24 @@ def build_gastrovision_webdataset(
             transforms.ToTensor(),
         ])
 
+    # Only shuffle the training split. Without this, every epoch iterates
+    # the shards/samples in the exact same fixed order every time, which
+    # hurts SGD/SSL training quality — val/test should stay deterministic.
+    # webdataset wants an explicit buffer size here, not a bare bool.
+    shuffle_samples = split == "train"
+
+    dataset = wds.WebDataset(
+        shards,
+        shardshuffle=100 if shuffle_samples else False,
+    )
+
+    if shuffle_samples:
+        # Shuffles a buffer of raw (still-encoded) samples before decode,
+        # so the memory cost stays low while still mixing across shards.
+        dataset = dataset.shuffle(1000)
+
     dataset = (
-        wds.WebDataset(
-            shards,
-            shardshuffle=False,
-        )
+        dataset
         .decode("pil")
         .to_tuple("jpg", "cls")
         .map_tuple(
