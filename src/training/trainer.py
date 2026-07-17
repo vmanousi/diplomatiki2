@@ -110,8 +110,16 @@ class Trainer:
             checkpoint_path,
         )
 
-    def fit(self, epochs):
+    def fit(self, epochs, early_stopping_patience=None):
+        """
+        early_stopping_patience:
+            If set, stop training after this many consecutive epochs
+            without a val_acc improvement. None (default) trains the
+            full number of epochs, matching the previous behaviour.
+        """
+
         history = []
+        epochs_without_improvement = 0
 
         for epoch in range(1, epochs + 1):
             print(f"\nEpoch {epoch}/{epochs}")
@@ -153,6 +161,19 @@ class Trainer:
                 self.best_val_acc = val_acc
                 self.save_checkpoint(epoch, val_acc)
                 print("Saved new best model.")
+                epochs_without_improvement = 0
+            else:
+                epochs_without_improvement += 1
+
+            if (
+                early_stopping_patience is not None
+                and epochs_without_improvement >= early_stopping_patience
+            ):
+                print(
+                    "Early stopping: no val_acc improvement for "
+                    f"{early_stopping_patience} epochs."
+                )
+                break
 
         if self.writer:
             self.writer.close()

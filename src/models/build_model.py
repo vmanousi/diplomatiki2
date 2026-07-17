@@ -75,6 +75,59 @@ def _freeze_vit_backbone(model):
         parameter.requires_grad = True
 
 
+def get_param_groups(model, backbone_lr, head_lr):
+    """
+    Split a supervised classification model's trainable parameters into a
+    backbone group and a head group, so the optimizer can use a smaller LR
+    for the pretrained backbone and a larger LR for the freshly initialized
+    head. Works for both the resnet ("fc") and timm ViT ("head") heads.
+    """
+
+    head_module = getattr(model, "head", None)
+
+    if head_module is None:
+        head_module = getattr(model, "fc", None)
+
+    if head_module is None:
+        raise ValueError(
+            "Could not locate a 'head' or 'fc' module on the model "
+            "to build discriminative learning-rate groups."
+        )
+
+    head_parameter_ids = {
+        id(parameter) for parameter in head_module.parameters()
+    }
+
+    backbone_parameters = [
+        parameter
+        for parameter in model.parameters()
+        if parameter.requires_grad
+        and id(parameter) not in head_parameter_ids
+    ]
+
+    head_parameters = [
+        parameter
+        for parameter in head_module.parameters()
+        if parameter.requires_grad
+    ]
+
+    param_groups = []
+
+    if backbone_parameters:
+        param_groups.append({"params": backbone_parameters, "lr": backbone_lr})
+
+    if head_parameters:
+        param_groups.append({"params": head_parameters, "lr": head_lr})
+
+    if not param_groups:
+        raise RuntimeError(
+            "No trainable parameters found while building "
+            "discriminative learning-rate groups."
+        )
+
+    return param_groups
+
+
 def build_model(
     model_name,
     num_classes,
@@ -167,16 +220,18 @@ def build_model(
 
         return model
 
-    if model_name in {
-        "vit_tiny",
-        "vit_small",
-        "vit_base",
-    }:
-        timm_name = {
-            "vit_tiny": "vit_tiny_patch16_224",
-            "vit_small": "vit_small_patch16_224",
-            "vit_base": "vit_base_patch16_224",
-        }[model_name]
+    vit_shorthand_names = {
+        "vit_tiny": "vit_tiny_patch16_224",
+        "vit_small": "vit_small_patch16_224",
+        "vit_base": "vit_base_patch16_224",
+    }
+
+    if model_name in vit_shorthand_names or model_name.startswith("vit_"):
+        # Known shorthand names map to the standard ImageNet-recipe ViT
+        # (patch16). Anything else starting with "vit_" is passed through
+        # as a literal timm model identifier, e.g.
+        # "vit_small_patch14_dinov2.lvd142m" for a Meta DINOv2 checkpoint.
+        timm_name = vit_shorthand_names.get(model_name, model_name)
 
         if backbone_checkpoint is not None:
             # Build the encoder without a classification head so

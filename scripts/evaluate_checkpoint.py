@@ -32,7 +32,7 @@ def main():
     device = get_device()
     print("Device:", device)
 
-    transform = build_transform(config)
+    transform = build_transform(config, split="val")
 
     val_dataset = build_dataset(
         config=config,

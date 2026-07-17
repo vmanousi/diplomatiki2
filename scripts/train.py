@@ -12,7 +12,7 @@ from src.data.build_dataset import build_dataset
 from src.data.build_transform import build_transform
 from src.evaluation.metrics import evaluate_model
 from src.evaluation.plots import plot_training_curves
-from src.models.build_model import build_model
+from src.models.build_model import build_model, get_param_groups
 from src.training.trainer import Trainer
 from src.utils.device import get_device
 from src.utils.seed import set_seed
@@ -172,7 +172,8 @@ def main():
     # --------------------------------------------------------------
     # Image transformations
     # --------------------------------------------------------------
-    transform = build_transform(config)
+    train_transform = build_transform(config, split="train")
+    eval_transform = build_transform(config, split="val")
 
     # --------------------------------------------------------------
     # Datasets
@@ -180,13 +181,13 @@ def main():
     train_dataset = build_dataset(
         config=config,
         split="train",
-        transform=transform,
+        transform=train_transform,
     )
 
     val_dataset = build_dataset(
         config=config,
         split="val",
-        transform=transform,
+        transform=eval_transform,
     )
 
     # WebDataset is iterable and must not be shuffled by
@@ -314,6 +315,37 @@ def main():
             "The model contains no trainable parameters."
         )
 
+    # Discriminative learning rates: a smaller LR for the pretrained
+    # backbone and a larger LR for the freshly initialized head, so full
+    # fine-tuning doesn't wreck the pretrained features. Optional — set
+    # both training.backbone_learning_rate and training.head_learning_rate
+    # together to enable it; otherwise every trainable parameter uses the
+    # single training.learning_rate as before.
+    backbone_learning_rate = training_cfg.get("backbone_learning_rate")
+    head_learning_rate = training_cfg.get("head_learning_rate")
+
+    use_discriminative_lr = (
+        backbone_learning_rate is not None
+        or head_learning_rate is not None
+    )
+
+    if use_discriminative_lr:
+        if backbone_learning_rate is None or head_learning_rate is None:
+            raise ValueError(
+                "Set both backbone_learning_rate and head_learning_rate "
+                "together to use discriminative learning rates."
+            )
+
+        optimizer_params = get_param_groups(
+            model,
+            backbone_lr=backbone_learning_rate,
+            head_lr=head_learning_rate,
+        )
+        default_learning_rate = head_learning_rate
+    else:
+        optimizer_params = trainable_parameters
+        default_learning_rate = training_cfg["learning_rate"]
+
     optimizer_name = training_cfg.get(
         "optimizer",
         "adam",
@@ -321,8 +353,8 @@ def main():
 
     if optimizer_name == "adam":
         optimizer = torch.optim.Adam(
-            trainable_parameters,
-            lr=training_cfg["learning_rate"],
+            optimizer_params,
+            lr=default_learning_rate,
             weight_decay=training_cfg.get(
                 "weight_decay",
                 0.0,
@@ -331,8 +363,8 @@ def main():
 
     elif optimizer_name == "adamw":
         optimizer = torch.optim.AdamW(
-            trainable_parameters,
-            lr=training_cfg["learning_rate"],
+            optimizer_params,
+            lr=default_learning_rate,
             weight_decay=training_cfg.get(
                 "weight_decay",
                 0.0,
@@ -341,8 +373,8 @@ def main():
 
     elif optimizer_name == "sgd":
         optimizer = torch.optim.SGD(
-            trainable_parameters,
-            lr=training_cfg["learning_rate"],
+            optimizer_params,
+            lr=default_learning_rate,
             momentum=training_cfg.get(
                 "momentum",
                 0.9,
@@ -363,10 +395,18 @@ def main():
         optimizer.__class__.__name__,
     )
 
-    print(
-        "Learning rate:",
-        training_cfg["learning_rate"],
-    )
+    if use_discriminative_lr:
+        print(
+            "Learning rate (backbone / head):",
+            backbone_learning_rate,
+            "/",
+            head_learning_rate,
+        )
+    else:
+        print(
+            "Learning rate:",
+            default_learning_rate,
+        )
 
     # --------------------------------------------------------------
     # Trainer
@@ -386,7 +426,10 @@ def main():
     # Training
     # --------------------------------------------------------------
     history = trainer.fit(
-        epochs=training_cfg["epochs"]
+        epochs=training_cfg["epochs"],
+        early_stopping_patience=training_cfg.get(
+            "early_stopping_patience"
+        ),
     )
 
     # --------------------------------------------------------------

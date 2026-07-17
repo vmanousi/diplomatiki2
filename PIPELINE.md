@@ -76,6 +76,37 @@ These exist in `outputs/experiments/` but their source config was deleted or sup
 
 **In short:** `exp01_supervised_gastrohun_resnet18_ep20` and `exp02_supervised_gastrohun_vit_tiny_ep20` (today's GastroHUN configs) haven't been run since the pipeline was standardized — the `exp01_resnet18_config`/`exp02_vit_tiny` results are from earlier, now-deleted config versions and shouldn't be treated as validating the current configs.
 
+## 4a. Data-quality notes (checked 2026-07-17)
+
+- **GastroHUN**: mild class imbalance (~2.7–3.1x largest/smallest class in every split), **zero** train/val/test leakage (checked via patient_id + filename). Clean.
+- **GastroVision webdataset**: severe class imbalance (17 to 880 samples/class, ~52x) and **real leakage** — 9 identical-key images shared between train/val, 12 between train/test, 4 between val/test (out of ~8k total). Small in magnitude, but any GastroVision-side val metrics (e.g. `exp05`/`exp06`) are very slightly optimistic. Doesn't affect GastroHUN-target experiments below.
+
+## 4b. Training-recipe fixes (added 2026-07-17)
+
+Earlier supervised runs trained with no augmentation, unweighted plain Adam, a single LR for the whole model, and no early stopping — which is why `exp05`/`exp06` overfit badly (train_acc ~0.99 vs val_acc ~0.54). Added, all opt-in / backward compatible:
+
+- `transforms.name: supervised_augmented` — RandomResizedCrop + flip + mild rotation + mild ColorJitter for train only; val/test always stay plain resize+ToTensor regardless of transform name.
+- `training.backbone_learning_rate` + `training.head_learning_rate` (set both together) — discriminative LR via `get_param_groups()` in `build_model.py`, so full fine-tuning doesn't wreck pretrained features. Omit both to keep the old single `learning_rate` behavior.
+- `training.optimizer: adamw` (already existed, just wasn't used by any config).
+- `training.early_stopping_patience: N` — stop after N epochs without val_acc improvement. Omit to train the full epoch count as before.
+
+## 4c. Phase A — backbone-source comparison on GastroHUN (added 2026-07-17)
+
+Matched-capacity (~22M params) comparison of pretraining source, holding model scale (ViT-S) constant, evaluated by fine-tuning/probing on GastroHUN:
+
+| Config | experiment_name | Backbone source | Adaptation | Status |
+|---|---|---|---|---|
+| `supervised_gastrohun_vit_small_imagenet_frozen.yaml` | exp12 | ImageNet-supervised ViT-S/16 (`vit_small`, timm) | frozen + linear probe | not yet run |
+| `supervised_gastrohun_vit_small_imagenet_finetune.yaml` | exp13 | ImageNet-supervised ViT-S/16 | full fine-tune (discriminative LR) | not yet run |
+| `supervised_gastrohun_vit_small_dinov2_frozen.yaml` | exp14 | Meta DINOv2 ViT-S/14 (`vit_small_patch14_dinov2.lvd142m`, timm) | frozen + linear probe | not yet run |
+| `supervised_gastrohun_vit_small_dinov2_finetune.yaml` | exp15 | Meta DINOv2 ViT-S/14 | full fine-tune (discriminative LR) | not yet run |
+
+Note: ImageNet arm is patch16 (21.7M params), DINOv2 arm is patch14 (22.1M params) — patch size differs because it's intrinsic to each method's official release, but total capacity is matched within ~2%.
+
+Secondary, cheaper vit_tiny (patch16, ~5.7M params) row already exists from earlier work — not capacity-matched to the above, useful only as a "does the effect hold at smaller scale too" check: `imagenet_gastrohun_vit_tiny.yaml` (exp07, ImageNet-pretrained), `dino_gastrohun_vit_tiny_frozen.yaml` (exp08) / `dino_gastrohun_vit_tiny_finetune.yaml` (exp09, + `_lr1e4` variant exp10, + teacher-backbone variant exp11) — all using the from-scratch DINO backbone pretrained on GastroVision (`exp07_dino_gastrovision_vit_tiny`), predating the recipe fixes in 4b (no augmentation, plain Adam, no discriminative LR).
+
+Not yet built: the domain-continued-pretraining branch (Meta DINOv2 → continued DINO-style SSL on GastroVision → GastroHUN), which is the most novel part of the comparison — requires new SSL pretraining code/config, to be done as its own step.
+
 ## 5. How to run / monitor
 
 ```bash
