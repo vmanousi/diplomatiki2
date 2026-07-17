@@ -31,8 +31,34 @@ class Trainer:
 
         self.best_val_f1 = 0.0
 
-    def train_one_epoch(self):
+    def _set_training_mode(self):
+        """
+        Put the model in train mode, but keep any submodule whose entire
+        parameter subtree is frozen (requires_grad=False everywhere
+        beneath it — e.g. a frozen backbone) in eval mode instead.
+
+        Setting requires_grad=False only stops gradient updates; it does
+        not stop BatchNorm from continuing to update its running
+        statistics from each batch, or Dropout from staying active. Both
+        would otherwise keep changing a "frozen" backbone's behavior
+        despite it never receiving a gradient update. Works for any
+        architecture (no assumptions about a "head"/"fc" naming
+        convention) since it walks the actual parameter tree.
+        """
+
         self.model.train()
+
+        for module in self.model.modules():
+            parameters = list(module.parameters(recurse=True))
+
+            if parameters and all(
+                not parameter.requires_grad
+                for parameter in parameters
+            ):
+                module.eval()
+
+    def train_one_epoch(self):
+        self._set_training_mode()
 
         total_loss = 0.0
         correct = 0
