@@ -33,6 +33,11 @@ class DINOLoss(nn.Module):
             torch.zeros(1, out_dim),
         )
 
+    
+    def set_teacher_temperature(self, temperature):
+        self.teacher_temperature = float(temperature)
+    
+    
     def forward(
         self,
         student_output,

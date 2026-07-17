@@ -23,7 +23,7 @@ transforms:
 
 training:
   epochs: 20
-  steps_per_epoch: 298
+  steps_per_epoch: 297
   batch_size: 16
 
   learning_rate: 0.0001
@@ -31,13 +31,17 @@ training:
   warmup_start_learning_rate: 0.000001
   final_learning_rate: 0.000001
 
+  mixed_precision: true
+
   weight_decay: 0.04
   num_workers: 2
 
   teacher_momentum: 0.996
   final_teacher_momentum: 1.0
 
-  teacher_temperature: 0.04
+  warmup_teacher_temperature: 0.04
+  teacher_temperature: 0.07
+
   student_temperature: 0.1
   center_momentum: 0.9
   gradient_clip: 3.0

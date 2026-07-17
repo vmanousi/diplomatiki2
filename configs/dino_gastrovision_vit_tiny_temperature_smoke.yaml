@@ -1,4 +1,4 @@
-experiment_name: exp07_dino_gastrovision_vit_tiny_schedule_smoke
+experiment_name: exp07_dino_temperature_smoke
 
 seed: 42
 
@@ -27,7 +27,7 @@ training:
   batch_size: 16
 
   learning_rate: 0.0001
-  warmup_epochs: 0
+  warmup_epochs: 1
   warmup_start_learning_rate: 0.000001
   final_learning_rate: 0.000001
 
@@ -37,7 +37,8 @@ training:
   teacher_momentum: 0.996
   final_teacher_momentum: 1.0
 
-  teacher_temperature: 0.04
+  warmup_teacher_temperature: 0.04
+  teacher_temperature: 0.07
   student_temperature: 0.1
   center_momentum: 0.9
   gradient_clip: 3.0

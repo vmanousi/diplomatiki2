@@ -1,4 +1,4 @@
-experiment_name: exp07_dino_gastrovision_vit_tiny_schedule_smoke
+experiment_name: exp07_dino_resume_smoke
 
 seed: 42
 
@@ -22,12 +22,12 @@ transforms:
   num_local_crops: 6
 
 training:
-  epochs: 1
+  epochs: 2
   steps_per_epoch: 297
   batch_size: 16
 
   learning_rate: 0.0001
-  warmup_epochs: 0
+  warmup_epochs: 1
   warmup_start_learning_rate: 0.000001
   final_learning_rate: 0.000001
 

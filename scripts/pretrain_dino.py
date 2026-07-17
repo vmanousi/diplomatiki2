@@ -11,27 +11,53 @@ from src.data.build_dataset import build_dataset
 from src.data.build_transform import build_transform
 from src.losses.dino_loss import DINOLoss
 from src.models.dino import build_dino_student_teacher
+from src.training.dino_schedules import (
+    cosine_schedule,
+    linear_warmup_schedule,
+)
 from src.training.dino_trainer import DINOTrainer
-from src.training.dino_schedules import cosine_schedule
 from src.utils.device import get_device
 from src.utils.seed import set_seed
 
 
 def load_config(config_path):
-    with open(config_path, "r", encoding="utf-8") as file:
+    """
+    Load a YAML configuration file.
+    """
+
+    with open(
+        config_path,
+        "r",
+        encoding="utf-8",
+    ) as file:
         return yaml.safe_load(file)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="DINO self-supervised pretraining on GI images."
+        description=(
+            "DINO self-supervised pretraining "
+            "on gastrointestinal images."
+        )
     )
+
     parser.add_argument(
         "--config",
         type=str,
         required=True,
         help="Path to the DINO YAML configuration.",
     )
+
+    parser.add_argument(
+        "--resume",
+        type=str,
+        default=None,
+        help=(
+            "Optional path to a DINO checkpoint "
+            "from which training will resume."
+        ),
+    )
+
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -48,17 +74,23 @@ def main():
         / "experiments"
         / experiment_name
     )
-    checkpoint_dir = experiment_dir / "checkpoints"
+
+    checkpoint_dir = (
+        experiment_dir
+        / "checkpoints"
+    )
 
     experiment_dir.mkdir(
         parents=True,
         exist_ok=True,
     )
+
     checkpoint_dir.mkdir(
         parents=True,
         exist_ok=True,
     )
 
+    # Save an exact copy of the configuration used.
     shutil.copy2(
         args.config,
         experiment_dir / "config.yaml",
@@ -70,14 +102,18 @@ def main():
     print("Experiment:", experiment_name)
     print("Dataset:", dataset_cfg["name"])
     print("Backbone:", model_cfg["name"])
+
     print(
         "Student views:",
         2 + transform_cfg["num_local_crops"],
     )
+
     print("Teacher views: 2")
 
+    # Build the DINO multi-crop transformation.
     transform = build_transform(config)
 
+    # Build the GastroVision training dataset.
     train_dataset = build_dataset(
         config=config,
         split="train",
@@ -93,6 +129,7 @@ def main():
         drop_last=True,
     )
 
+    # Build initially identical student and teacher models.
     student, teacher = build_dino_student_teacher(
         model_name=model_cfg["name"],
         out_dim=model_cfg["out_dim"],
@@ -105,22 +142,51 @@ def main():
             256,
         ),
     )
-    
-    
-    steps_per_epoch = training_cfg["steps_per_epoch"]
-    total_steps = steps_per_epoch * training_cfg["epochs"]
 
-    warmup_epochs = training_cfg.get(
-        "warmup_epochs",
-        0,
+    # GastroVision is an iterable WebDataset and therefore
+    # does not expose a normal Python length.
+    #
+    # The number of optimizer steps in one epoch is defined
+    # explicitly in the YAML configuration.
+    steps_per_epoch = int(
+        training_cfg["steps_per_epoch"]
     )
-    warmup_steps = steps_per_epoch * warmup_epochs
 
-    if total_steps <= 0:
-        raise RuntimeError(
-            "The DINO training configuration produced "
-            "zero total training steps."
+    epochs = int(
+        training_cfg["epochs"]
+    )
+
+    warmup_epochs = int(
+        training_cfg.get(
+            "warmup_epochs",
+            0,
         )
+    )
+
+    if steps_per_epoch <= 0:
+        raise ValueError(
+            "steps_per_epoch must be greater than zero."
+        )
+
+    if epochs <= 0:
+        raise ValueError(
+            "epochs must be greater than zero."
+        )
+
+    if warmup_epochs < 0:
+        raise ValueError(
+            "warmup_epochs cannot be negative."
+        )
+
+    total_steps = (
+        steps_per_epoch
+        * epochs
+    )
+
+    warmup_steps = (
+        steps_per_epoch
+        * warmup_epochs
+    )
 
     if warmup_steps > total_steps:
         raise ValueError(
@@ -128,8 +194,12 @@ def main():
             "number of training epochs."
         )
 
+    # Learning-rate schedule:
+    # linear warm-up followed by cosine decay.
     learning_rate_schedule = cosine_schedule(
-        start_value=training_cfg["learning_rate"],
+        start_value=training_cfg[
+            "learning_rate"
+        ],
         final_value=training_cfg.get(
             "final_learning_rate",
             1e-6,
@@ -142,6 +212,8 @@ def main():
         ),
     )
 
+    # Teacher momentum:
+    # cosine increase from its initial value toward 1.0.
     teacher_momentum_schedule = cosine_schedule(
         start_value=training_cfg.get(
             "teacher_momentum",
@@ -154,9 +226,37 @@ def main():
         total_steps=total_steps,
     )
 
-    print("Steps per epoch:", steps_per_epoch)
-    print("Total training steps:", total_steps)
-    print("Warm-up steps:", warmup_steps)
+    # Teacher temperature:
+    # linear warm-up followed by a constant final value.
+    teacher_temperature_schedule = (
+        linear_warmup_schedule(
+            start_value=training_cfg.get(
+                "warmup_teacher_temperature",
+                0.04,
+            ),
+            final_value=training_cfg.get(
+                "teacher_temperature",
+                0.07,
+            ),
+            total_steps=total_steps,
+            warmup_steps=warmup_steps,
+        )
+    )
+
+    print(
+        "Steps per epoch:",
+        steps_per_epoch,
+    )
+
+    print(
+        "Total training steps:",
+        total_steps,
+    )
+
+    print(
+        "Warm-up steps:",
+        warmup_steps,
+    )
 
     print(
         "Learning-rate schedule:",
@@ -171,8 +271,13 @@ def main():
         "->",
         teacher_momentum_schedule[-1],
     )
-    
-    
+
+    print(
+        "Teacher-temperature schedule:",
+        teacher_temperature_schedule[0],
+        "->",
+        teacher_temperature_schedule[-1],
+    )
 
     num_student_views = (
         2
@@ -183,8 +288,11 @@ def main():
         out_dim=model_cfg["out_dim"],
         num_student_views=num_student_views,
         teacher_temperature=training_cfg.get(
-            "teacher_temperature",
-            0.04,
+            "warmup_teacher_temperature",
+            training_cfg.get(
+                "teacher_temperature",
+                0.04,
+            ),
         ),
         student_temperature=training_cfg.get(
             "student_temperature",
@@ -221,43 +329,225 @@ def main():
             "gradient_clip",
             3.0,
         ),
-        
-        learning_rate_schedule=learning_rate_schedule,
-        teacher_momentum_schedule=teacher_momentum_schedule,
+        learning_rate_schedule=(
+            learning_rate_schedule
+        ),
+        teacher_momentum_schedule=(
+            teacher_momentum_schedule
+        ),
+        teacher_temperature_schedule=(
+            teacher_temperature_schedule
+        ),
+        mixed_precision=training_cfg.get(
+            "mixed_precision",
+            False,
+        ),
     )
 
-    history = trainer.fit(
-        epochs=training_cfg["epochs"]
+    start_epoch = 1
+
+    if args.resume is not None:
+        checkpoint_path = Path(
+            args.resume
+        )
+
+        if not checkpoint_path.is_file():
+            raise FileNotFoundError(
+                "Resume checkpoint not found: "
+                f"{checkpoint_path}"
+            )
+
+        checkpoint = torch.load(
+            checkpoint_path,
+            map_location=device,
+        )
+
+        # These values are required for every resumable
+        # DINO checkpoint.
+        required_keys = {
+            "epoch",
+            "global_step",
+            "student_state_dict",
+            "teacher_state_dict",
+            "optimizer_state_dict",
+            "criterion_state_dict",
+        }
+
+        missing_keys = required_keys.difference(
+            checkpoint.keys()
+        )
+
+        if missing_keys:
+            raise KeyError(
+                "Resume checkpoint is missing keys: "
+                f"{sorted(missing_keys)}"
+            )
+
+        student.load_state_dict(
+            checkpoint[
+                "student_state_dict"
+            ]
+        )
+
+        teacher.load_state_dict(
+            checkpoint[
+                "teacher_state_dict"
+            ]
+        )
+
+        optimizer.load_state_dict(
+            checkpoint[
+                "optimizer_state_dict"
+            ]
+        )
+
+        # Restore the DINO criterion state.
+        # This includes the registered center buffer.
+        criterion.load_state_dict(
+            checkpoint[
+                "criterion_state_dict"
+            ]
+        )
+
+        # New AMP checkpoints contain the GradScaler state.
+        # Older non-AMP checkpoints remain usable.
+        if "scaler_state_dict" in checkpoint:
+            trainer.scaler.load_state_dict(
+                checkpoint[
+                    "scaler_state_dict"
+                ]
+            )
+
+            print(
+                "Restored AMP scaler state."
+            )
+        else:
+            print(
+                "Checkpoint has no AMP scaler state; "
+                "using a newly initialized scaler."
+            )
+
+        trainer.global_step = int(
+            checkpoint["global_step"]
+        )
+
+        if trainer.global_step < 0:
+            raise ValueError(
+                "Checkpoint global_step "
+                "cannot be negative."
+            )
+
+        if trainer.global_step > total_steps:
+            raise ValueError(
+                "Checkpoint global_step exceeds "
+                "the total schedule length. "
+                "Check that the resume YAML matches "
+                "the original experiment."
+            )
+
+        start_epoch = (
+            int(checkpoint["epoch"])
+            + 1
+        )
+
+        if start_epoch <= epochs:
+            if trainer.global_step >= total_steps:
+                raise ValueError(
+                    "The checkpoint has exhausted the "
+                    "configured schedules, but the YAML "
+                    "still requests additional epochs."
+                )
+
+        print(
+            "Resumed checkpoint:",
+            checkpoint_path,
+        )
+
+        print(
+            "Resume epoch:",
+            start_epoch,
+        )
+
+        print(
+            "Resume global step:",
+            trainer.global_step,
+        )
+
+    history_path = (
+        experiment_dir
+        / "history.csv"
     )
 
-    history_path = experiment_dir / "history.csv"
+    previous_history = []
 
-    pd.DataFrame(history).to_csv(
+    # When resuming into the same experiment folder,
+    # preserve all previously recorded epochs.
+    if (
+        args.resume is not None
+        and history_path.is_file()
+    ):
+        previous_history = (
+            pd.read_csv(history_path)
+            .to_dict(orient="records")
+        )
+
+    new_history = trainer.fit(
+        epochs=epochs,
+        start_epoch=start_epoch,
+    )
+
+    history = (
+        previous_history
+        + new_history
+    )
+
+    pd.DataFrame(
+        history
+    ).to_csv(
         history_path,
         index=False,
     )
 
-    # Save the encoders separately for downstream GastroHUN experiments.
+    # Save student and teacher encoders separately for
+    # downstream GastroHUN classification experiments.
+    student_backbone_path = (
+        experiment_dir
+        / "student_backbone_final.pt"
+    )
+
+    teacher_backbone_path = (
+        experiment_dir
+        / "teacher_backbone_final.pt"
+    )
+
     torch.save(
         student.backbone.state_dict(),
-        experiment_dir / "student_backbone_final.pt",
+        student_backbone_path,
     )
 
     torch.save(
         teacher.backbone.state_dict(),
-        experiment_dir / "teacher_backbone_final.pt",
+        teacher_backbone_path,
     )
 
-    print("Saved history:", history_path)
+    print(
+        "Saved history:",
+        history_path,
+    )
+
     print(
         "Saved student backbone:",
-        experiment_dir / "student_backbone_final.pt",
+        student_backbone_path,
     )
+
     print(
         "Saved teacher backbone:",
-        experiment_dir / "teacher_backbone_final.pt",
+        teacher_backbone_path,
     )
-    print("DINO pretraining finished.")
+
+    print(
+        "DINO pretraining finished."
+    )
 
 
 if __name__ == "__main__":
