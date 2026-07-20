@@ -1,0 +1,30 @@
+experiment_name: exp19_dino_teacher_gastrohun_vit_tiny_finetune_standardized
+
+seed: 42
+
+dataset:
+  name: gastrohun
+  images_root: data/Labeled_Images_GastroHun
+  csv_path: data/official_splits_GastroHun/image_classification.csv
+  label_column: Complete agreement
+  num_classes: 23
+
+model:
+  name: vit_tiny
+  pretrained: false
+  backbone_checkpoint: outputs/experiments/exp07_dino_gastrovision_vit_tiny/teacher_backbone_final.pt
+  freeze_backbone: false
+
+transforms:
+  name: supervised_augmented
+  image_size: 224
+
+training:
+  epochs: 20
+  batch_size: 8
+  backbone_learning_rate: 0.00001
+  head_learning_rate: 0.001
+  optimizer: adamw
+  weight_decay: 0.01
+  early_stopping_patience: 5
+  num_workers: 2
