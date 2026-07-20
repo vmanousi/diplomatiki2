@@ -1,0 +1,29 @@
+experiment_name: exp23_dinov2_continued_teacher_gastrohun_vit_small_frozen
+
+seed: 42
+
+dataset:
+  name: gastrohun
+  images_root: data/Labeled_Images_GastroHun
+  csv_path: data/official_splits_GastroHun/image_classification.csv
+  label_column: Complete agreement
+  num_classes: 23
+
+model:
+  name: vit_small_patch14_dinov2.lvd142m
+  pretrained: false
+  backbone_checkpoint: outputs/experiments/exp20_dino_gastrovision_vit_small_dinov2_continued/teacher_backbone_final.pt
+  freeze_backbone: true
+
+transforms:
+  name: supervised_augmented
+  image_size: 224
+
+training:
+  epochs: 20
+  batch_size: 8
+  learning_rate: 0.001
+  optimizer: adamw
+  weight_decay: 0.01
+  early_stopping_patience: 5
+  num_workers: 2

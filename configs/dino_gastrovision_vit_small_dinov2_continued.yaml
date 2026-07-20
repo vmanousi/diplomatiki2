@@ -1,0 +1,51 @@
+experiment_name: exp20_dino_gastrovision_vit_small_dinov2_continued
+
+seed: 42
+
+dataset:
+  name: gastrovision_webdataset
+  root: data/Gastrovision_webdataset
+  image_size: 224
+
+model:
+  name: vit_small_patch14_dinov2.lvd142m
+  pretrained_backbone: true  # start from Meta's DINOv2 weights, not random init
+  out_dim: 1024
+  hidden_dim: 2048
+  bottleneck_dim: 256
+
+transforms:
+  name: dino_multicrop
+  global_crop_size: 224
+  local_crop_size: 98  # patch size is 14 here (vs. 16 for vit_tiny) — 98 = 14*7, must stay divisible by 14
+  global_crop_scale: [0.4, 1.0]
+  local_crop_scale: [0.05, 0.4]
+  num_local_crops: 6
+
+training:
+  epochs: 20
+  steps_per_epoch: 297
+  batch_size: 16
+
+  # Smaller than the from-scratch run's 0.0001 — this is continuing an
+  # already-good representation, not learning one from nothing, so the
+  # backbone should shift gently rather than being retrained hard.
+  learning_rate: 0.00002
+  warmup_epochs: 2
+  warmup_start_learning_rate: 0.000001
+  final_learning_rate: 0.000001
+
+  mixed_precision: true
+
+  weight_decay: 0.04
+  num_workers: 2
+
+  teacher_momentum: 0.996
+  final_teacher_momentum: 1.0
+
+  warmup_teacher_temperature: 0.04
+  teacher_temperature: 0.07
+
+  student_temperature: 0.1
+  center_momentum: 0.9
+  gradient_clip: 3.0

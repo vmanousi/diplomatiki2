@@ -121,22 +121,39 @@ Two more bugs found by review:
 
 `Trainer.train_one_epoch()` called plain `self.model.train()` every epoch, including on a frozen backbone. `requires_grad=False` only stops gradient updates — it doesn't stop BatchNorm from continuing to update its running statistics from each batch, or Dropout from staying active, both of which would otherwise keep changing a "frozen" backbone's behavior despite it never receiving a gradient update. Checked impact on this project specifically: all current/planned frozen configs (`exp08`, `exp12`, `exp14`) use ViT backbones with LayerNorm (mode-invariant) and zero-probability Dropout by default, so this had **no numeric effect on any existing result** — but it would immediately start mattering the moment a frozen ResNet (already supported in `build_model.py`, just unused with `freeze_backbone` so far) or a ViT with nonzero dropout is tried. Fixed generally via `Trainer._set_training_mode()`, which walks the parameter tree and puts any submodule whose entire parameter subtree is frozen into eval mode, regardless of architecture or a "head"/"fc" naming convention. Verified on a synthetic model with BatchNorm + Dropout in a frozen backbone: running stats now correctly stop updating.
 
-## 4c. Phase A — backbone-source comparison on GastroHUN (added 2026-07-17)
+## 4c. Phase A — backbone-source comparison on GastroHUN (results in, 2026-07-20)
 
-Matched-capacity (~22M params) comparison of pretraining source, holding model scale (ViT-S) constant, evaluated by fine-tuning/probing on GastroHUN:
+Matched-capacity (~22M params) comparison of pretraining source, holding model scale (ViT-S) constant, evaluated by fine-tuning/probing on GastroHUN. All run on the cluster with the recipe fixes from 4b/4b-2/4b-3/4b-5 (augmentation, per-backbone normalization, discriminative LR, macro-F1 checkpoint/early-stopping, frozen-eval-mode fix).
 
-| Config | experiment_name | Backbone source | Adaptation | Status |
-|---|---|---|---|---|
-| `supervised_gastrohun_vit_small_imagenet_frozen.yaml` | exp12 | ImageNet-supervised ViT-S/16 (`vit_small`, timm) | frozen + linear probe | not yet run |
-| `supervised_gastrohun_vit_small_imagenet_finetune.yaml` | exp13 | ImageNet-supervised ViT-S/16 | full fine-tune (discriminative LR) | not yet run |
-| `supervised_gastrohun_vit_small_dinov2_frozen.yaml` | exp14 | Meta DINOv2 ViT-S/14 (`vit_small_patch14_dinov2.lvd142m`, timm) | frozen + linear probe | not yet run |
-| `supervised_gastrohun_vit_small_dinov2_finetune.yaml` | exp15 | Meta DINOv2 ViT-S/14 | full fine-tune (discriminative LR) | not yet run |
+| Config | experiment_name | Backbone source | Adaptation | Accuracy | Macro F1 |
+|---|---|---|---|---|---|
+| `supervised_gastrohun_vit_small_imagenet_frozen.yaml` | exp12 | ImageNet-supervised ViT-S/16 | frozen probe | 53.34% | 51.17% |
+| `supervised_gastrohun_vit_small_imagenet_finetune.yaml` | exp13 | ImageNet-supervised ViT-S/16 | full fine-tune | 71.50% | 70.61% |
+| `supervised_gastrohun_vit_small_dinov2_frozen.yaml` | exp14 | Meta DINOv2 ViT-S/14 | frozen probe | 67.34% | 66.62% |
+| `supervised_gastrohun_vit_small_dinov2_finetune.yaml` | exp15 | Meta DINOv2 ViT-S/14 | full fine-tune | **82.60%** | **82.44%** |
 
-Note: ImageNet arm is patch16 (21.7M params), DINOv2 arm is patch14 (22.1M params) — patch size differs because it's intrinsic to each method's official release, but total capacity is matched within ~2%.
+Both arms confirmed same ViT-S capacity (patch16 vs patch14 — intrinsic to each method's release, ~2% param difference) — so DINOv2 > ImageNet is a clean, capacity-controlled result, not a size confound. **DINOv2 wins clearly at both adaptation levels.**
 
-Secondary, cheaper vit_tiny (patch16, ~5.7M params) row already exists from earlier work — not capacity-matched to the above, useful only as a "does the effect hold at smaller scale too" check: `imagenet_gastrohun_vit_tiny.yaml` (exp07, ImageNet-pretrained), `dino_gastrohun_vit_tiny_frozen.yaml` (exp08) / `dino_gastrohun_vit_tiny_finetune.yaml` (exp09, + `_lr1e4` variant exp10, + teacher-backbone variant exp11) — all using the from-scratch DINO backbone pretrained on GastroVision (`exp07_dino_gastrovision_vit_tiny`), predating the recipe fixes in 4b (no augmentation, plain Adam, no discriminative LR).
+Secondary, smaller-scale row (~5.7M params, vit_tiny, **not** capacity-matched to the above — flagged, but unlikely to explain gaps this large given the pretraining-data-scale difference dwarfs the capacity difference): from-scratch DINO pretrained on GastroVision (`exp07_dino_gastrovision_vit_tiny`, predates the shuffle fix in 4b-4), evaluated both from its student and teacher checkpoint:
 
-Not yet built: the domain-continued-pretraining branch (Meta DINOv2 → continued DINO-style SSL on GastroVision → GastroHUN), which is the most novel part of the comparison — requires new SSL pretraining code/config, to be done as its own step.
+| Config | experiment_name | Backbone source | Adaptation | Accuracy | Macro F1 |
+|---|---|---|---|---|---|
+| `supervised_gastrohun_vit_tiny_dino_student_frozen.yaml` | exp16 | Custom DINO student (GastroVision, from scratch) | frozen probe | 29.89% | 29.14% |
+| `supervised_gastrohun_vit_tiny_dino_student_finetune.yaml` | exp17 | Custom DINO student | full fine-tune | 60.40% | 59.18% |
+| `supervised_gastrohun_vit_tiny_dino_teacher_frozen.yaml` | exp18 | Custom DINO teacher (EMA) | frozen probe | 26.36% | 25.81% |
+| `supervised_gastrohun_vit_tiny_dino_teacher_finetune.yaml` | exp19 | Custom DINO teacher | full fine-tune | 55.11% | 53.92% |
+
+Reads as: self-supervised pretraining from scratch on ~4,758 unlabeled images falls well short of both ImageNet-supervised and DINOv2 pretraining — DINOv2's *frozen* result alone (67.34%) beats this custom backbone's *fine-tuned* result (60.40%), pointing at pretraining-corpus scale as the dominant factor. Student beats teacher here (atypical vs. published DINO results, where the EMA teacher usually wins) — plausibly because the short schedule (~20 epochs, ~6k steps) on a small dataset doesn't give the teacher's EMA enough steps to reach the regime where averaging usually helps.
+
+**Built and ready, not yet run**: the domain-continued-pretraining branch (Meta DINOv2 → continued DINO-style SSL on GastroVision → GastroHUN). `build_dino_student_teacher()`/`DINONetwork` in `src/models/dino.py` now accept `pretrained_backbone` (default `False`, fully backward compatible — every existing from-scratch config is unaffected); set `model.pretrained_backbone: true` to instead initialize from a named pretrained checkpoint (e.g. a DINOv2 tag) instead of random init.
+
+- **Pretraining config**: `dino_gastrovision_vit_small_dinov2_continued.yaml` (exp20) — uses `vit_small_patch14_dinov2.lvd142m`, a smaller LR (2e-5 vs. 1e-4 for the from-scratch run, since this is adapting an already-good representation rather than learning one from nothing), and `local_crop_size: 98` instead of 96 (patch14 requires crop sizes divisible by 14; 96 isn't, 98 is — verified 96 fails outright with a shape error on this architecture).
+- **Downstream GastroHUN configs** (student + teacher, frozen + fine-tune, same pattern as the custom-DINO rows above) — built ahead of pretraining finishing, pointing at exp20's not-yet-existent checkpoint paths:
+  - `supervised_gastrohun_vit_small_dinov2_continued_student_frozen.yaml` (exp21)
+  - `supervised_gastrohun_vit_small_dinov2_continued_student_finetune.yaml` (exp22)
+  - `supervised_gastrohun_vit_small_dinov2_continued_teacher_frozen.yaml` (exp23)
+  - `supervised_gastrohun_vit_small_dinov2_continued_teacher_finetune.yaml` (exp24)
+  - Verified all 4 load correctly (right architecture, right trainable-param counts, normalization applied) against a simulated exp20 checkpoint before exp20 actually existed — but they'll only actually run once `exp20`'s `student_backbone_final.pt`/`teacher_backbone_final.pt` exist for real, after the pretraining job finishes.
 
 ## 5. How to run / monitor
 

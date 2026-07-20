@@ -104,6 +104,14 @@ def main():
     print("Backbone:", model_cfg["name"])
 
     print(
+        "Pretrained backbone init:",
+        model_cfg.get(
+            "pretrained_backbone",
+            False,
+        ),
+    )
+
+    print(
         "Student views:",
         2 + transform_cfg["num_local_crops"],
     )
@@ -129,7 +137,11 @@ def main():
         drop_last=True,
     )
 
-    # Build initially identical student and teacher models.
+    # Build initially identical student and teacher models. Defaults to
+    # a from-scratch backbone exactly as before — set
+    # model.pretrained_backbone: true in the config to instead start
+    # from that backbone's pretrained weights (e.g. a DINOv2 checkpoint
+    # tag), for continued pretraining rather than training from scratch.
     student, teacher = build_dino_student_teacher(
         model_name=model_cfg["name"],
         out_dim=model_cfg["out_dim"],
@@ -140,6 +152,10 @@ def main():
         bottleneck_dim=model_cfg.get(
             "bottleneck_dim",
             256,
+        ),
+        pretrained_backbone=model_cfg.get(
+            "pretrained_backbone",
+            False,
         ),
     )
 
