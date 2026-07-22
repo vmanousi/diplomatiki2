@@ -48,7 +48,7 @@ def build_trial_config(base_config, trial):
 
 def objective(trial, base_config, experiments_root):
     config = build_trial_config(base_config, trial)
-    experiment_dir = experiments_root / config["experiment_name"]
+    experiment_dir = experiments_root / f"trial{trial.number:03d}"
 
     def on_epoch_end(epoch, val_f1):
         # Lets Optuna kill a clearly unpromising trial early instead of
@@ -107,7 +107,16 @@ def main():
     args = parser.parse_args()
 
     base_config = load_config(args.config)
-    study_name = args.study_name or f"{base_config['experiment_name']}_optuna"
+
+    # Groups every trial under outputs/experiments/optuna/<config file
+    # name>/trialNNN/ — keeps tuning runs out of the main experiments
+    # listing, and separate from any other config tuned this way later.
+    config_name = Path(args.config).stem
+    experiments_root = (
+        Path("outputs") / "experiments" / "optuna" / config_name
+    )
+
+    study_name = args.study_name or f"{config_name}_optuna"
 
     storage_dir = Path("outputs") / "optuna"
     storage_dir.mkdir(parents=True, exist_ok=True)
@@ -121,8 +130,6 @@ def main():
         load_if_exists=True,
         pruner=optuna.pruners.MedianPruner(n_warmup_steps=3),
     )
-
-    experiments_root = Path("outputs") / "experiments"
 
     study.optimize(
         lambda trial: objective(trial, base_config, experiments_root),
@@ -150,9 +157,8 @@ def main():
     print("  value (best val macro F1):", study.best_trial.value)
     print("  params:", study.best_trial.params)
     print(
-        "  experiment_name:",
-        f"{base_config['experiment_name']}_optuna_trial"
-        f"{study.best_trial.number:03d}",
+        "  output folder:",
+        experiments_root / f"trial{study.best_trial.number:03d}",
     )
     print("=" * 60)
 
