@@ -65,30 +65,31 @@ def load_checkpoint(
     return checkpoint
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description=(
-            "Train and evaluate an "
-            "image-classification experiment."
-        )
-    )
+def run_training(
+    config,
+    experiment_dir,
+    source_config_path=None,
+    on_epoch_end=None,
+):
+    """
+    Run one full train + evaluate pass for an already-loaded config dict,
+    writing all outputs under experiment_dir.
 
-    parser.add_argument(
-        "--config",
-        type=str,
-        required=True,
-        help=(
-            "Path to the YAML experiment "
-            "configuration."
-        ),
-    )
+    source_config_path:
+        If given, the exact config *file* is copied verbatim (preserving
+        original formatting/comments) — used by the CLI entrypoint below.
+        If None (e.g. a config assembled in memory, as an Optuna trial
+        does), the config dict itself is serialized to YAML instead.
 
-    args = parser.parse_args()
+    on_epoch_end:
+        Optional per-epoch callback, forwarded to Trainer.fit — see there
+        for details (this is how Optuna pruning hooks in).
 
-    # --------------------------------------------------------------
-    # Configuration and reproducibility
-    # --------------------------------------------------------------
-    config = load_config(args.config)
+    Returns a dict with "metrics" (the final evaluate_model() output) and
+    "best_val_f1" (the best macro F1 reached during training), which is
+    what a hyperparameter search optimizes against.
+    """
+
     set_seed(config.get("seed", 42))
 
     experiment_name = config["experiment_name"]
@@ -99,11 +100,7 @@ def main():
     # --------------------------------------------------------------
     # Experiment directories
     # --------------------------------------------------------------
-    experiment_dir = (
-        Path("outputs")
-        / "experiments"
-        / experiment_name
-    )
+    experiment_dir = Path(experiment_dir)
 
     checkpoint_dir = (
         experiment_dir
@@ -131,10 +128,18 @@ def main():
     )
 
     # Save the exact configuration used.
-    shutil.copy2(
-        args.config,
-        experiment_dir / "config.yaml",
-    )
+    if source_config_path is not None:
+        shutil.copy2(
+            source_config_path,
+            experiment_dir / "config.yaml",
+        )
+    else:
+        with open(
+            experiment_dir / "config.yaml",
+            "w",
+            encoding="utf-8",
+        ) as file:
+            yaml.safe_dump(config, file)
 
     # --------------------------------------------------------------
     # Device
@@ -430,6 +435,7 @@ def main():
         early_stopping_patience=training_cfg.get(
             "early_stopping_patience"
         ),
+        on_epoch_end=on_epoch_end,
     )
 
     # --------------------------------------------------------------
@@ -516,6 +522,47 @@ def main():
 
     print(
         "Training finished."
+    )
+
+    return {
+        "metrics": metrics,
+        "best_val_f1": trainer.best_val_f1,
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description=(
+            "Train and evaluate an "
+            "image-classification experiment."
+        )
+    )
+
+    parser.add_argument(
+        "--config",
+        type=str,
+        required=True,
+        help=(
+            "Path to the YAML experiment "
+            "configuration."
+        ),
+    )
+
+    args = parser.parse_args()
+
+    config = load_config(args.config)
+    experiment_name = config["experiment_name"]
+
+    experiment_dir = (
+        Path("outputs")
+        / "experiments"
+        / experiment_name
+    )
+
+    run_training(
+        config=config,
+        experiment_dir=experiment_dir,
+        source_config_path=args.config,
     )
 
 

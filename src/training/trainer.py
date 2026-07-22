@@ -137,7 +137,7 @@ class Trainer:
             checkpoint_path,
         )
 
-    def fit(self, epochs, early_stopping_patience=None):
+    def fit(self, epochs, early_stopping_patience=None, on_epoch_end=None):
         """
         Best checkpoint and early stopping are both driven by macro-F1
         (not accuracy) — with per-class imbalance, accuracy can reward a
@@ -149,6 +149,14 @@ class Trainer:
             If set, stop training after this many consecutive epochs
             without a val_f1 improvement. None (default) trains the full
             number of epochs, matching the previous behaviour.
+
+        on_epoch_end:
+            Optional callback invoked as on_epoch_end(epoch, val_f1) after
+            each epoch. Letting it raise (e.g. optuna.TrialPruned) stops
+            training immediately, the same as any other exception — this
+            is how an Optuna hyperparameter search can prune an
+            unpromising trial early instead of waiting for
+            early_stopping_patience.
         """
 
         history = []
@@ -197,6 +205,9 @@ class Trainer:
                 epochs_without_improvement = 0
             else:
                 epochs_without_improvement += 1
+
+            if on_epoch_end is not None:
+                on_epoch_end(epoch, val_f1)
 
             if (
                 early_stopping_patience is not None
